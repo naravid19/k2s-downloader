@@ -2,3 +2,5 @@
 *.pyc
 .specstory
 venv/
+proxies.txt
+urls.json
