@@ -4,3 +4,4 @@
 venv/
 proxies.txt
 urls.json
+tmp/
