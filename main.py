@@ -61,7 +61,7 @@ def buildRange(value: int, numsplits: int) -> Dict:
     return range_dict
 
 
-def main(urls: List[str], filename: str) -> None:
+def main(urls: List[str], filename: str, min_speed: int, timeout: int) -> None:
     
     if not urls:
         print("Please Enter some url to begin download.")
@@ -94,6 +94,11 @@ def main(urls: List[str], filename: str) -> None:
         f = io.BytesIO()
         progress_bar = None
         proxy_idx = 0
+
+        # Speed monitoring variables
+        window_start_time = time.time()
+        window_bytes = 0
+        low_speed_start_time = None
 
         for i in WORKING_PROXY_LIST:
             if not PROXIES_LOCK[i].locked():
@@ -128,6 +133,29 @@ def main(urls: List[str], filename: str) -> None:
                 if stop: break
                 if chunk_start_time + 20 < time.time(): break
                 chunk_start_time = time.time()
+                
+                # Speed check
+                current_time = time.time()
+                window_bytes += len(data)
+                elapsed = current_time - window_start_time
+                
+                if elapsed >= 1.0:
+                    speed = window_bytes / elapsed
+                    if speed < min_speed:
+                        if low_speed_start_time is None:
+                            low_speed_start_time = current_time
+                        elif current_time - low_speed_start_time > timeout:
+                            # Speed too low for too long
+                            if proxy_idx in WORKING_PROXY_LIST:
+                                WORKING_PROXY_LIST.remove(proxy_idx)
+                            print(f"\n[Proxy {proxy_idx}] Speed {human_readable_bytes(speed)}/s too low for {timeout}s. Switching...")
+                            break
+                    else:
+                        low_speed_start_time = None
+                    
+                    window_start_time = current_time
+                    window_bytes = 0
+
                 # progress_bar.update(len(data))
                 total_iter.update(len(data))
                 f.write(data)
@@ -228,6 +256,10 @@ if __name__ == '__main__':
                         help='number of connections to use (default 20)', default=20)
     parser.add_argument('--split-size', dest='size', action='store',
                         help='Size to split at (default 20M)', default=1024 * 1024 * 20)
+    parser.add_argument('--min-speed', dest='min_speed', action='store',
+                        help='Minimum speed to keep connection (default 100KB)', default="100KB")
+    parser.add_argument('--timeout', dest='timeout', action='store', type=float,
+                        help='Timeout in seconds for low speed (default 5s)', default=5)
 
     args = parser.parse_args()
 
@@ -252,6 +284,8 @@ if __name__ == '__main__':
         file_name = args.filename
     batch_count = int(args.batch_count)
     BYTES_PER_SPLIT = parse_size(args.size)
+    min_speed = parse_size(args.min_speed)
+    timeout = args.timeout
 
     if not pathlib.Path("urls.json").exists():
         with open("urls.json", "w") as f:
@@ -276,7 +310,7 @@ if __name__ == '__main__':
     redownloaded = False
 
     while True:
-        main(urls, file_name)
+        main(urls, file_name, min_speed, timeout)
         if which("ffmpeg"):
             if not check_vid(pathlib.Path(file_name)):
                 if not redownloaded:
